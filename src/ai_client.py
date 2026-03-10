@@ -52,8 +52,6 @@ async def fetch_available_models() -> str:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     result = await response.json()
-                    _log.info(f"[模型获取] API返回: {result}")
-
                     # 尝试不同的数据结构
                     models = []
                     if "data" in result:
@@ -169,14 +167,23 @@ async def call_ai_api(messages: List[Dict]) -> str | None:
                 else:
                     processed_messages.append(msg)
 
+            # 检测是否有图片消息
+            has_image = any(
+                msg.get("role") == "user" and "图片路径：" in msg.get("content", "")
+                for msg in messages
+            )
+
             payload = {
                 "model": current_model_name,
                 "messages": processed_messages,
                 "temperature": 0.7,
-                "max_tokens": 128000,
-                "tools": TOOLS,  # 添加工具定义
-                "tool_choice": "auto"  # 自动选择是否使用工具
+                "max_tokens": 128000
             }
+
+            # 只有在没有图片时才传递工具定义，让AI专注于图片分析
+            if not has_image:
+                payload["tools"] = TOOLS
+                payload["tool_choice"] = "auto"
             headers = {
                 "Content-Type": "application/json"
             }

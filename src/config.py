@@ -11,11 +11,11 @@ AI_MODEL_NAME = None
 # 并发控制：最多10个并发请求
 MAX_CONCURRENT_REQUESTS = 10
 
-# 会话过期时间（秒）：1小时
-SESSION_EXPIRE_TIME = 3600
+# 会话过期时间（秒）：0 表示永不过期
+SESSION_EXPIRE_TIME = 0
 
 # 历史记录最大长度（条数）
-MAX_HISTORY_LENGTH = 20
+MAX_HISTORY_LENGTH = 20000
 
 # 系统提示词
 SYSTEM_PROMPT = """你是一个强大的AI助手，可以使用工具来帮助用户。

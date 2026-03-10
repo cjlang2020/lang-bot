@@ -26,9 +26,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import botpy
 from src.bot_client import MyClient
+from src.session_manager import load_from_file, session_histories
 
 
 if __name__ == "__main__":
+    # 加载历史会话记录
+    load_from_file()
+    print(f"[启动] 已加载 {len(session_histories)} 个历史会话")
+
     # 从环境变量读取配置
     appid = os.getenv("QQ_BOT_APPID")
     secret = os.getenv("QQ_BOT_SECRET")
