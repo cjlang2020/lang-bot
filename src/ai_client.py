@@ -35,6 +35,12 @@ request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 # 全局模型名称
 current_model_name = AI_MODEL_NAME
 
+# 全局模型上下文长度
+current_model_context_length = 0
+
+# 全局模型详细信息
+current_model_info = {}
+
 
 async def fetch_available_models() -> str:
     """
@@ -43,7 +49,7 @@ async def fetch_available_models() -> str:
     Returns:
         str: 模型名称
     """
-    global current_model_name
+    global current_model_name, current_model_context_length
     try:
         async with aiohttp.ClientSession() as session:
             url = f"{AI_API_BASE_URL}/models"
@@ -52,6 +58,15 @@ async def fetch_available_models() -> str:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     result = await response.json()
+
+                    # 打印API返回的原始数据
+                    print("\n" + "="*80)
+                    print("📋 模型API返回数据:")
+                    print("="*80)
+                    import json
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                    print("="*80 + "\n")
+
                     # 尝试不同的数据结构
                     models = []
                     if "data" in result:
@@ -68,12 +83,28 @@ async def fetch_available_models() -> str:
                         first_model = models[0]
                         if isinstance(first_model, dict):
                             model_id = first_model.get("id") or first_model.get("model") or first_model.get("name")
+
+                            # 保存模型详细信息
+                            meta = first_model.get("meta", {})
+                            current_model_info["name"] = model_id
+                            current_model_info["owned_by"] = first_model.get("owned_by", "未知")
+                            current_model_info["n_ctx_train"] = meta.get("n_ctx_train", 0)
+                            current_model_info["n_vocab"] = meta.get("n_vocab", 0)
+                            current_model_info["n_embd"] = meta.get("n_embd", 0)
+                            current_model_info["n_params"] = meta.get("n_params", 0)
+                            current_model_info["size"] = meta.get("size", 0)
+                            current_model_info["capabilities"] = first_model.get("capabilities", [])
+
+                            # 获取上下文长度
+                            current_model_context_length = current_model_info["n_ctx_train"] or 0
                         else:
                             model_id = str(first_model)
 
                         if model_id:
                             current_model_name = model_id
                             _log.info(f"[模型获取] 成功设置模型: {current_model_name}")
+                            if current_model_context_length:
+                                _log.info(f"[模型获取] 模型上下文长度: {current_model_context_length}")
                             return current_model_name
                         else:
                             _log.error(f"[模型获取] 第一个模型缺少id/name: {first_model}")
@@ -98,6 +129,26 @@ def get_model_name() -> str:
         str: 当前模型名称
     """
     return current_model_name
+
+
+def get_model_context_length() -> int:
+    """
+    获取当前模型的上下文长度
+
+    Returns:
+        int: 上下文长度，未知时返回0
+    """
+    return current_model_context_length
+
+
+def get_model_info() -> dict:
+    """
+    获取当前模型的详细信息
+
+    Returns:
+        dict: 模型信息字典
+    """
+    return current_model_info
 
 
 async def call_ai_api(messages: List[Dict]) -> str | None:

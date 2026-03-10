@@ -6,7 +6,7 @@ import botpy
 from botpy import logging
 from botpy.message import C2CMessage
 
-from src.ai_client import process_message_with_ai, fetch_available_models, get_model_name
+from src.ai_client import process_message_with_ai, fetch_available_models, get_model_name, get_model_context_length, get_model_info
 from src.image_handler import process_image_attachment, get_month_folder
 from src.config import AI_MODEL_NAME, MAX_HISTORY_LENGTH
 from src.session_manager import clear_session, get_session_stats
@@ -38,9 +38,45 @@ def handle_command(text_content: str, session_id: str) -> str | None:
     if command == "/会话":
         stats = get_session_stats(session_id)
         model_name = get_model_name() or "未设置"
+        model_info = get_model_info()
         msg_count = stats["message_count"]
         img_count = stats["image_count"]
         tokens = stats["estimated_tokens"]
+
+        # 格式化上下文长度
+        n_ctx = model_info.get("n_ctx_train", 0)
+        if n_ctx > 0:
+            context_str = f"{n_ctx:,}"
+        else:
+            context_str = "未知"
+
+        # 格式化参数数量
+        n_params = model_info.get("n_params", 0)
+        if n_params > 0:
+            if n_params >= 1e9:
+                params_str = f"{n_params/1e9:.1f}B"
+            elif n_params >= 1e6:
+                params_str = f"{n_params/1e6:.1f}M"
+            else:
+                params_str = f"{n_params:,}"
+        else:
+            params_str = "未知"
+
+        # 格式化模型大小
+        size = model_info.get("size", 0)
+        if size > 0:
+            if size >= 1e9:
+                size_str = f"{size/1e9:.1f}GB"
+            elif size >= 1e6:
+                size_str = f"{size/1e6:.1f}MB"
+            else:
+                size_str = f"{size:,}B"
+        else:
+            size_str = "未知"
+
+        # 模型能力
+        capabilities = model_info.get("capabilities", [])
+        cap_str = ", ".join(capabilities) if capabilities else "未知"
 
         return (
             f"📊 会话统计\n"
@@ -48,7 +84,12 @@ def handle_command(text_content: str, session_id: str) -> str | None:
             f"📝 消息记录: {msg_count}/{MAX_HISTORY_LENGTH}\n"
             f"🖼️ 图片数量: {img_count}\n"
             f"🎯 预估Token: ~{tokens}\n"
-            f"🤖 当前模型: {model_name}"
+            f"━━━━━━━━━━━━━━━\n"
+            f"🤖 模型: {model_name}\n"
+            f"📏 上下文: {context_str}\n"
+            f"🔢 参数量: {params_str}\n"
+            f"💾 模型大小: {size_str}\n"
+            f"⚡ 能力: {cap_str}"
         )
 
     # 未知指令
