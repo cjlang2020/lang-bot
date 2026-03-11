@@ -12,6 +12,11 @@
 
 涉及到的代码如果有扩展代码，也就是不能所有代码放一个文件，需要分开，代码可放在src目录下
 
+如果要启用测试，可以在终端执行下面命令在切换python环境：
+C:/Users/Lang/anaconda3/Scripts/activate
+conda activate D:\AI\lang-bot\envs
+
+
 ## 项目结构
 
 ```

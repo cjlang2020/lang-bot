@@ -6,17 +6,16 @@ from src.config import (
     AI_API_BASE_URL,
     AI_MODEL_NAME,
     MAX_CONCURRENT_REQUESTS,
-    SESSION_EXPIRE_TIME,
-    MAX_HISTORY_LENGTH,
     SYSTEM_PROMPT
 )
 from src.session_manager import (
-    session_histories,
-    get_session,
-    add_to_session,
-    session_exists,
-    cleanup_expired_sessions,
-    maybe_cleanup
+    last_ai_messages,
+    get_history_messages,
+    get_last_images,
+    set_last_images,
+    update_last_ai_messages,
+    clear_history,
+    get_stats
 )
 from src.image_handler import (
     get_month_folder,
@@ -40,16 +39,15 @@ __all__ = [
     "AI_API_BASE_URL",
     "AI_MODEL_NAME",
     "MAX_CONCURRENT_REQUESTS",
-    "SESSION_EXPIRE_TIME",
-    "MAX_HISTORY_LENGTH",
     "SYSTEM_PROMPT",
     # session_manager
-    "session_histories",
-    "get_session",
-    "add_to_session",
-    "session_exists",
-    "cleanup_expired_sessions",
-    "maybe_cleanup",
+    "last_ai_messages",
+    "get_history_messages",
+    "get_last_images",
+    "set_last_images",
+    "update_last_ai_messages",
+    "clear_history",
+    "get_stats",
     # image_handler
     "get_month_folder",
     "download_image",

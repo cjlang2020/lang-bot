@@ -11,7 +11,7 @@ QQ机器人主入口
     - src/image_handler.py: 图片处理
     - src/ai_client.py: AI API调用
     - src/bot_client.py: 机器人客户端
-    - tools_service.py: 工具服务
+    - src/windows_tools.py: 工具服务
 """
 
 import sys
@@ -26,13 +26,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import botpy
 from src.bot_client import MyClient
-from src.session_manager import load_from_file, session_histories
+from src.session_manager import last_ai_messages
 
 
 if __name__ == "__main__":
-    # 加载历史会话记录
-    load_from_file()
-    print(f"[启动] 已加载 {len(session_histories)} 个历史会话")
+    # 显示历史消息状态
+    msg_count = len(last_ai_messages.get("messages", []))
+    print(f"[启动] 已加载历史消息: {msg_count} 条")
 
     # 从环境变量读取配置
     appid = os.getenv("QQ_BOT_APPID")

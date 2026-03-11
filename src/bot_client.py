@@ -6,21 +6,19 @@ import botpy
 from botpy import logging
 from botpy.message import C2CMessage
 
-from src.ai_client import process_message_with_ai, fetch_available_models, get_model_name, get_model_context_length, get_model_info
-from src.image_handler import process_image_attachment, get_month_folder
-from src.config import AI_MODEL_NAME, MAX_HISTORY_LENGTH
-from src.session_manager import clear_session, get_session_stats
+from src.ai_client import process_message_with_ai, fetch_available_models, get_model_name, get_model_info
+from src.image_handler import process_image_attachment
+from src.session_manager import clear_history, get_stats
 
 _log = logging.get_logger()
 
 
-def handle_command(text_content: str, session_id: str) -> str | None:
+def handle_command(text_content: str) -> str | None:
     """
     处理 "/" 开头的指令
 
     Args:
         text_content: 消息内容
-        session_id: 会话ID
 
     Returns:
         str | None: 指令处理结果，如果不是指令则返回None
@@ -28,15 +26,14 @@ def handle_command(text_content: str, session_id: str) -> str | None:
     if not text_content.startswith("/"):
         return None
 
-    # 提取指令（去掉开头的 "/"）
     command = text_content.strip().lower()
 
     if command == "/清理":
-        clear_session(session_id)
+        clear_history()
         return "已被洗脑，我将不记得之前的事情！"
 
     if command == "/会话":
-        stats = get_session_stats(session_id)
+        stats = get_stats()
         model_name = get_model_name() or "未设置"
         model_info = get_model_info()
         msg_count = stats["message_count"]
@@ -45,10 +42,7 @@ def handle_command(text_content: str, session_id: str) -> str | None:
 
         # 格式化上下文长度
         n_ctx = model_info.get("n_ctx_train", 0)
-        if n_ctx > 0:
-            context_str = f"{n_ctx:,}"
-        else:
-            context_str = "未知"
+        context_str = f"{n_ctx:,}" if n_ctx > 0 else "未知"
 
         # 格式化参数数量
         n_params = model_info.get("n_params", 0)
@@ -81,7 +75,7 @@ def handle_command(text_content: str, session_id: str) -> str | None:
         return (
             f"📊 会话统计\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"📝 消息记录: {msg_count}/{MAX_HISTORY_LENGTH}\n"
+            f"📝 消息记录: {msg_count}\n"
             f"🖼️ 图片数量: {img_count}\n"
             f"🎯 预估Token: ~{tokens}\n"
             f"━━━━━━━━━━━━━━━\n"
@@ -92,7 +86,6 @@ def handle_command(text_content: str, session_id: str) -> str | None:
             f"⚡ 能力: {cap_str}"
         )
 
-    # 未知指令
     return f"未知指令: {text_content}"
 
 
@@ -102,7 +95,6 @@ class MyClient(botpy.Client):
     async def on_ready(self):
         """机器人启动就绪"""
         _log.info(f"robot 「{self.robot.name}」 on_ready!")
-        # 启动时自动获取模型名称
         await fetch_available_models()
         _log.info(f"已设置AI模型: {get_model_name()}")
 
@@ -113,13 +105,11 @@ class MyClient(botpy.Client):
         Args:
             message: C2C消息对象
         """
-        # 使用用户openid作为会话ID，保持同一用户的对话历史
-        session_id = f"c2c_{message.author.user_openid}"
         text_content = message.content or ""
         image_paths = []
 
-        # 检查是否是指令（"/" 开头），指令不传递给大模型
-        command_response = handle_command(text_content, session_id)
+        # 检查是否是指令
+        command_response = handle_command(text_content)
         if command_response is not None:
             await message.reply(content=command_response)
             return
@@ -129,18 +119,15 @@ class MyClient(botpy.Client):
             for attachment in message.attachments:
                 save_path, error = await process_image_attachment(attachment)
                 if save_path:
-                    _log.info(f"[C2C] [Session:{session_id}] 图片下载成功: {save_path}")
+                    _log.info(f"[C2C] 图片下载成功: {save_path}")
                     image_paths.append(save_path)
                 elif error:
-                    _log.error(f"[C2C] [Session:{session_id}] 图片处理失败: {error}")
+                    _log.error(f"[C2C] 图片处理失败: {error}")
 
         # 调用AI处理消息
-        ai_response = await process_message_with_ai(text_content, image_paths, session_id)
+        ai_response = await process_message_with_ai(text_content, image_paths)
 
         if ai_response:
-            # 回复AI的结果（纯内容）
             await message.reply(content=ai_response)
         else:
-            # AI调用失败，返回默认消息
             await message.reply(content="抱歉，暂时无法处理您的消息。")
-
