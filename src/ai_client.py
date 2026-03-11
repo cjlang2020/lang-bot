@@ -27,7 +27,7 @@ from src.session_manager import (
     update_last_ai_messages
 )
 from src.image_handler import encode_image_to_base64
-from src.windows_tools import TOOLS, TOOL_FUNCTIONS, process_tool_calls
+from src.tools import TOOLS, TOOL_FUNCTIONS, process_tool_calls
 
 _log = logging.get_logger()
 

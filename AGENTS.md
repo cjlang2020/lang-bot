@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 这是一个QQ机器人项目，通过QQ发送信息到本项目，项目接收后转发给支持OPENAI协议的第三方大模型，大模型返回数据后再次返回给QQ用户。
 
@@ -17,44 +17,31 @@
 
 ```
 lang-bot/
-├── start_listener.py          # 主入口文件
-├── .env                       # 环境变量配置（QQ机器人凭证）
+├── start_listener.py      # 主入口文件
+├── .env                   # 环境变量配置（QQ机器人凭证）
 ├── .gitignore
 ├── CLAUDE.md
 ├── README.md
-├── test_ripgrep.py            # Ripgrep测试脚本
-├── 搜索工具更新说明.md
-├── Ripgrep搜索工具使用指南.md
 └── src/
     ├── __init__.py
-    ├── config.py              # 配置和常量
-    ├── bot_client.py          # QQ机器人客户端
-    ├── ai_client.py           # AI API调用（支持循环评估）
-    ├── session_manager.py     # 会话管理（单用户模式）
-    ├── image_handler.py       # 图片处理
-    ├── search_tools.py        # Ripgrep搜索工具核心实现
-    ├── windows_tools.py       # Windows工具（向后兼容，已迁移到src/tools）
-    └── tools/                 # AI工具模块（按功能拆分）
-        ├── __init__.py
-        ├── file_system.py     # 文件系统工具（列表、读写文件）
-        ├── search.py          # 文件搜索工具（Ripgrep）
-        ├── system.py          # 系统工具（命令、进程、系统信息）
-        ├── network.py         # 网络工具（网络信息、Ping）
-        ├── time.py            # 时间工具
-        └── tool_registry.py   # 工具注册表（聚合所有工具）
+    ├── config.py          # 配置和常量
+    ├── bot_client.py      # QQ机器人客户端
+    ├── ai_client.py       # AI API调用（支持循环评估）
+    ├── session_manager.py # 会话管理（单用户模式）
+    ├── image_handler.py   # 图片处理
+    └── windows_tools.py   # Windows工具函数
 ```
 
 ## 主要功能
 
 - 接收QQ私聊消息
 - 支持图片消息的多模态处理
-- 支持工具调用（文件操作、系统命令、网络操作、进程管理等）
+- 支持工具调用（文件操作、系统命令等）
 - 会话历史管理，支持上下文对话
 - 图片历史记忆，用户可以引用之前的图片
 - **智能体循环机制**：AI自动评估回复，最多循环5次直到获得有效结果
 - **中间过程可见**：每次AI回复、工具调用、模拟问话都会发送给QQ用户
-- **Ripgrep高效搜索**：支持按文件名和内容搜索（替代Everything）
-- **模块化工具设计**：所有工具按功能分类，易于维护和扩展
+- **Everything快速搜索**：支持使用Everything SDK进行文件搜索
 
 ## 数据流程
 
@@ -152,36 +139,26 @@ AI客户端模块，处理与大模型的交互：
 - `process_image_attachment()`: 处理消息中的图片附件
 
 ### src/windows_tools.py
-Windows工具模块（向后兼容，实际功能已迁移到 `src/tools/` 目录）
+Windows工具模块，提供AI可调用的工具函数：
 
-### src/tools/ (新增)
-工具模块目录，按功能分类拆分所有AI可调用的工具函数：
-
-**src/tools/file_system.py - 文件系统工具**
+**文件系统工具：**
 - `list_directory`: 列出目录内容
 - `read_file`: 读取文件内容
 - `create_file`: 创建新文件
 - `write_to_file`: 写入文件
+- `search_files`: 使用Everything快速搜索文件
 
-**src/tools/search.py - 搜索工具（使用Ripgrep）**
-- `search_files`: 按文件名搜索（支持通配符和正则）
-- `search_content`: 按内容搜索文件内部文本
-
-**src/tools/system.py - 系统工具**
+**系统工具：**
 - `execute_command`: 执行CMD/PowerShell命令
 - `get_system_info`: 获取系统信息（CPU/内存/磁盘/网络）
 - `get_process_list`: 获取进程列表
 
-**src/tools/network.py - 网络工具**
+**网络工具：**
 - `get_network_info`: 获取网络信息
 - `ping_host`: Ping主机
 
-**src/tools/time.py - 时间工具**
+**时间工具：**
 - `get_current_time`: 获取当前时间
-
-**src/tools/tool_registry.py - 工具注册表**
-- 聚合所有工具定义和函数映射
-- 提供统一的工具调用接口
 
 ## 大模型相关
 
