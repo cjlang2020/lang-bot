@@ -1,12 +1,17 @@
+import os
+from dotenv import load_dotenv
+
+# 加载.env文件
+load_dotenv()
+
 """
 配置模块 - 存储所有配置常量和全局变量
 """
-
 # 第三方应用配置
-AI_API_BASE_URL = "http://127.0.0.1:9900/v1"
-
-# 模型名称（会自动从API获取，这里留空作为占位符）
-AI_MODEL_NAME = None
+AI_API_BASE_URL = os.getenv("AI_API_BASE_URL", "http://127.0.0.1:9900/v1")
+AI_API_KEY = os.getenv("AI_API_KEY", "")  # 从环境变量读取API密钥
+# 模型名称：如果配置了则使用配置值，否则自动从API获取
+AI_MODEL_NAME = os.getenv("AI_MODEL_NAME", "") or None
 
 # 并发控制：最多10个并发请求
 MAX_CONCURRENT_REQUESTS = 10

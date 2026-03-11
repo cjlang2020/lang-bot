@@ -14,6 +14,7 @@ from botpy import logging
 
 from src.config import (
     AI_API_BASE_URL,
+    AI_API_KEY,
     AI_MODEL_NAME,
     MAX_CONCURRENT_REQUESTS,
     MAX_STEPS,
@@ -86,16 +87,26 @@ def parse_text_tool_call(text: str) -> List[Dict]:
 
 async def fetch_available_models() -> str:
     """
-    从API获取可用的模型列表，并返回第一个模型名称
+    获取模型名称：优先使用配置的模型，否则从API自动获取
 
     Returns:
         str: 模型名称
     """
     global current_model_name, current_model_context_length
+
+    # 如果配置了模型名称，直接使用
+    if AI_MODEL_NAME:
+        current_model_name = AI_MODEL_NAME
+        _log.info(f"[模型配置] 使用配置的模型: {current_model_name}")
+        return current_model_name
+
+    # 否则从API自动获取
     try:
         async with aiohttp.ClientSession() as session:
             url = f"{AI_API_BASE_URL}/models"
             headers = {"Content-Type": "application/json"}
+            if AI_API_KEY:
+                headers["Authorization"] = f"Bearer {AI_API_KEY}"
 
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
@@ -138,7 +149,7 @@ async def fetch_available_models() -> str:
 
                         if model_id:
                             current_model_name = model_id
-                            _log.info(f"[模型获取] 成功设置模型: {current_model_name}")
+                            _log.info(f"[模型获取] 自动获取模型: {current_model_name}")
                             return current_model_name
                     else:
                         _log.error(f"[模型获取] API返回空模型列表")
@@ -238,7 +249,7 @@ async def call_ai_api_single(
                 "model": current_model_name,
                 "messages": processed_messages,
                 "temperature": 0.7,
-                "max_tokens": 128000
+                "max_tokens": 65536
             }
 
             # 只在非图片消息时启用工具
@@ -247,6 +258,8 @@ async def call_ai_api_single(
                 payload["tool_choice"] = "auto"
 
             headers = {"Content-Type": "application/json"}
+            if AI_API_KEY:
+                headers["Authorization"] = f"Bearer {AI_API_KEY}"
 
             _log.info(f"[AI API] 发送请求，消息数: {len(processed_messages)}")
 
