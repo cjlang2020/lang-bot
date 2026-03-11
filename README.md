@@ -16,21 +16,28 @@
 
 ```
 lang-bot/
-├── start_listener.py      # 主入口文件
-├── .env                   # 环境变量配置
+├── start_listener.py          # 主入口文件
+├── .env                       # 环境变量配置
 ├── README.md
 ├── CLAUDE.md
-├── data/                  # 数据目录
-│   ├── memory.json        # 会话历史
-│   └── YYYY-MM/           # 按月份存储的图片
+├── data/                      # 数据目录
+│   ├── memory.json           # 会话历史
+│   └── YYYY-MM/              # 按月份存储的图片
 └── src/
     ├── __init__.py
-    ├── config.py          # 配置和常量
-    ├── bot_client.py      # QQ机器人客户端
-    ├── ai_client.py       # AI API调用（支持循环评估）
-    ├── session_manager.py # 会话管理（单用户模式）
-    ├── image_handler.py   # 图片处理
-    └── windows_tools.py   # Windows工具函数
+    ├── config.py              # 配置和常量
+    ├── bot_client.py          # QQ机器人客户端
+    ├── ai_client.py           # AI API调用（支持循环评估）
+    ├── session_manager.py     # 会话管理（单用户模式）
+    ├── image_handler.py       # 图片处理
+    ├── search_tools.py        # Ripgrep搜索核心实现
+    └── tools/                 # 工具模块（按功能分类）
+        ├── __init__.py
+        ├── file_system.py     # 文件系统工具
+        ├── search.py          # 搜索工具
+        ├── system.py          # 系统工具
+        ├── network.py         # 网络工具
+        └── time.py            # 时间工具
 ```
 
 ## 快速开始
