@@ -1,13 +1,13 @@
 """
 AI客户端模块 - 处理与AI API的交互
-支持循环调用大模型直到获得有效结果
+基于 finish_reason 的智能体循环机制
 """
 
 import asyncio
 import os
 import re
 import json
-from typing import List, Dict, Callable, Awaitable
+from typing import List, Dict, Callable, Awaitable, Optional, Any
 
 import aiohttp
 from botpy import logging
@@ -16,9 +16,8 @@ from src.config import (
     AI_API_BASE_URL,
     AI_MODEL_NAME,
     MAX_CONCURRENT_REQUESTS,
-    MAX_LOOP_COUNT,
-    SYSTEM_PROMPT,
-    EVALUATION_PROMPT
+    MAX_STEPS,
+    SYSTEM_PROMPT
 )
 from src.session_manager import (
     get_history_messages,
@@ -27,7 +26,7 @@ from src.session_manager import (
     update_last_ai_messages
 )
 from src.image_handler import encode_image_to_base64
-from src.tools import TOOLS, TOOL_FUNCTIONS, process_tool_calls
+from src.tools import TOOLS, process_tool_calls
 
 _log = logging.get_logger()
 
@@ -105,7 +104,6 @@ async def fetch_available_models() -> str:
                     print("\n" + "="*80)
                     print("📋 模型API返回数据:")
                     print("="*80)
-                    import json
                     print(json.dumps(result, ensure_ascii=False, indent=2))
                     print("="*80 + "\n")
 
@@ -166,146 +164,47 @@ def get_model_info() -> dict:
     return current_model_info
 
 
-async def evaluate_response(question: str, answer: str) -> bool:
+class AIResponse:
+    """AI响应封装类"""
+    def __init__(
+        self,
+        content: Optional[str] = None,
+        finish_reason: str = "stop",
+        tool_calls: Optional[List[Dict]] = None,
+        error: Optional[str] = None
+    ):
+        self.content = content
+        self.finish_reason = finish_reason
+        self.tool_calls = tool_calls or []
+        self.error = error
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return len(self.tool_calls) > 0
+
+    @property
+    def is_done(self) -> bool:
+        """判断是否应该结束循环"""
+        return self.finish_reason in ["stop", "end_turn", "length"]
+
+
+async def call_ai_api_single(
+    messages: List[Dict],
+    tools: Optional[List[Dict]] = None
+) -> AIResponse:
     """
-    评估大模型回复是否有效
-
-    Args:
-        question: 用户原始问题
-        answer: 大模型回复
-
-    Returns:
-        bool: True=有结果，False=无结果
-    """
-    try:
-        question_stripped = question.strip().lower()
-        answer_stripped = answer.strip()
-
-        # 简单问候列表
-        simple_greetings = [
-            "你好", "您好", "嗨", "hi", "hello", "在吗", "在不在",
-            "早上好", "下午好", "晚上好", "早", "晚安",
-            "怎么样", "最近好吗", "吃了吗", "干嘛呢"
-        ]
-
-        # 简单告别列表
-        simple_goodbyes = [
-            "拜拜", "再见", "晚安", "走了", "溜了"
-        ]
-
-        # 判断是否为简单问候
-        is_greeting = any(
-            question_stripped.startswith(g.lower()) and len(question_stripped) <= len(g) + 2
-            for g in simple_greetings
-        )
-
-        # 判断是否为简单告别
-        is_goodbye = any(
-            question_stripped.startswith(g.lower()) and len(question_stripped) <= len(g) + 2
-            for g in simple_goodbyes
-        )
-
-        if is_greeting or is_goodbye:
-            _log.info(f"[评估] 简单问候/告别，直接返回有效")
-            return True
-
-        # 具体问题的判断指标
-        specific_question_indicators = [
-            "什么", "怎么", "如何", "为什么", "哪", "几", "多少", "为啥",
-            "查找", "搜索", "找", "读取", "查看", "打开", "执行", "运行",
-            "帮我", "能否", "可以", "有没有", "是不是", "告诉我",
-            "文件", "目录", "系统", "进程", "网络", "命令", "代码",
-            "路径", "位置", "在哪里", "列出", "显示", "看看"
-        ]
-
-        # 判断是否是具体问题
-        is_specific_question = any(
-            indicator in question_stripped
-            for indicator in specific_question_indicators
-        )
-
-        # 如果不是具体问题，直接返回有效（例如感谢、确认等）
-        if not is_specific_question:
-            _log.info(f"[评估] 非具体问题，直接返回有效")
-            return True
-
-        # 对于具体问题，需要更严格的判断
-        if is_specific_question:
-            # 回答太短（小于15字符），认为无效
-            if len(answer_stripped) < 15:
-                _log.info(f"[评估] 具体问题回答太短({len(answer_stripped)}字符)，无结果")
-                return False
-
-            # 无效回答短语列表
-            pure_failure_phrases = [
-                "我不知道", "我无法回答", "我无法处理这个请求",
-                "抱歉，我无法", "对不起，我不能", "我没有能力",
-                "我不会", "我不能", "这个我做不到"
-            ]
-
-            for phrase in pure_failure_phrases:
-                if phrase in answer:
-                    _log.info(f"[评估] 包含无效短语'{phrase}'，无结果")
-                    return False
-
-            # 列出类问题的特殊判断
-            list_questions = ["列出", "显示", "看看", "list", "dir", "ls"]
-            if any(q in question_stripped for q in list_questions):
-                # 列出目录操作返回空目录也算有效
-                if "目录为空" in answer or "没有找到" in answer:
-                    return True
-
-            # 搜索类问题的特殊判断
-            search_questions = ["搜索", "查找", "找", "search", "find"]
-            if any(q in question_stripped for q in search_questions):
-                # 没找到文件也是有效回答
-                if "未找到" in answer or "不存在" in answer:
-                    return True
-
-        _log.info(f"[评估] 回答有效，长度: {len(answer)}字符")
-        return True
-
-    except Exception as e:
-        _log.error(f"[评估] 异常: {e}")
-        return True  # 异常时默认有结果，避免无限循环
-
-
-async def call_ai_api(messages: List[Dict], save_history: bool = True, status_callback: Callable[[str], Awaitable[None]] | None = None) -> str | None:
-    """
-    调用第三方AI应用API（支持多模态和工具调用）
+    单次调用AI API，返回结构化响应
 
     Args:
         messages: 消息列表
-        save_history: 是否保存到历史记录
-        status_callback: 状态通知回调函数（发送给用户）
+        tools: 工具定义列表
 
     Returns:
-        str | None: AI回复内容，失败返回None
+        AIResponse: 结构化的AI响应
     """
     try:
         async with aiohttp.ClientSession() as session:
             url = f"{AI_API_BASE_URL}/chat/completions"
-
-            # 注意：不再发送"正在思考..."，避免消息去重
-            # 直接等待AI响应后发送结果
-
-            print("\n" + "="*60)
-            print("📦 发送给AI的消息:")
-            print("="*60)
-            for idx, msg in enumerate(messages, 1):
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                print(f"[{idx}] {role.upper()}: ", end="")
-                if isinstance(content, list):
-                    for item in content:
-                        if item.get("type") == "text":
-                            print(item.get('text', '')[:100])
-                            break
-                    else:
-                        print("[多模态内容]")
-                else:
-                    print(str(content)[:100])
-            print("="*60 + "\n")
 
             # 处理多模态消息
             processed_messages = []
@@ -342,155 +241,168 @@ async def call_ai_api(messages: List[Dict], save_history: bool = True, status_ca
                 "max_tokens": 128000
             }
 
-            if not has_image:
-                payload["tools"] = TOOLS
+            # 只在非图片消息时启用工具
+            if not has_image and tools:
+                payload["tools"] = tools
                 payload["tool_choice"] = "auto"
 
             headers = {"Content-Type": "application/json"}
-            _log.info(f"[AI API] 准备发送请求，消息数: {len(processed_messages)}")
+
+            _log.info(f"[AI API] 发送请求，消息数: {len(processed_messages)}")
 
             async with session.post(url, json=payload, headers=headers) as response:
                 if response.status == 200:
                     result = await response.json()
+
                     if result.get("choices") and len(result["choices"]) > 0:
                         choice = result["choices"][0]
+                        message = choice.get("message", {})
+                        finish_reason = choice.get("finish_reason", "stop")
 
-                        if "message" in choice:
-                            message = choice["message"]
+                        # 检查原生工具调用
+                        tool_calls = message.get("tool_calls", [])
 
-                            # 处理工具调用
-                            if "tool_calls" in message and message["tool_calls"]:
-                                tool_names = [tc['function']['name'] for tc in message["tool_calls"]]
-                                _log.info(f"[工具调用] {tool_names}")
+                        # 检查文本格式的工具调用
+                        content = message.get("content", "")
+                        if not tool_calls and content:
+                            text_tool_calls = parse_text_tool_call(content)
+                            if text_tool_calls:
+                                tool_calls = text_tool_calls
 
-                                # 工具调用过程不发送给用户，直接执行
-                                tool_results = await process_tool_calls(message["tool_calls"])
-                                _log.info(f"[工具调用] 返回结果数: {len(tool_results)}")
-
-                                tool_call_msg = {
-                                    "role": "assistant",
-                                    "content": None,
-                                    "tool_calls": message["tool_calls"]
-                                }
-                                final_messages = processed_messages + [tool_call_msg] + tool_results
-
-                                _log.info("🔄 再次调用AI，传入工具结果...")
-
-                                # 再次调用大模型，传入工具结果，这次的回复会发送给用户
-                                final_payload = {
-                                    "model": current_model_name,
-                                    "messages": final_messages,
-                                    "temperature": 0.7,
-                                    "max_tokens": 2048
-                                }
-
-                                async with session.post(url, json=final_payload, headers=headers) as final_response:
-                                    if final_response.status == 200:
-                                        final_result = await final_response.json()
-                                        if final_result.get("choices") and len(final_result["choices"]) > 0:
-                                            final_choice = final_result["choices"][0]
-                                            if "message" in final_choice:
-                                                ai_reply = final_choice["message"].get("content", "")
-                                                if ai_reply:
-                                                    _log.info(f"🤖 AI最终回复: {ai_reply[:100]}{'...' if len(ai_reply) > 100 else ''}")
-                                                    if save_history:
-                                                        saved_messages = final_messages + [{"role": "assistant", "content": ai_reply}]
-                                                        update_last_ai_messages(saved_messages, current_model_name)
-                                                    return ai_reply
-                                                else:
-                                                    return "抱歉，我无法处理这个请求。"
-                                        else:
-                                            return "抱歉，处理请求时出现问题。"
-                                    else:
-                                        return "抱歉，服务暂时不可用。"
-
-                            # 普通回复
-                            elif "content" in message and message["content"]:
-                                ai_reply = message["content"]
-
-                                # 检查是否包含文本格式的工具调用
-                                text_tool_calls = parse_text_tool_call(ai_reply)
-
-                                if text_tool_calls:
-                                    tool_names = [tc['function']['name'] for tc in text_tool_calls]
-                                    _log.info(f"[工具调用（文本格式）] {tool_names}")
-
-                                    # 工具调用过程不发送给用户，直接执行
-                                    tool_results = await process_tool_calls(text_tool_calls)
-                                    _log.info(f"[工具调用] 返回结果数: {len(tool_results)}")
-
-                                    # 构建工具调用消息
-                                    tool_call_msg = {
-                                        "role": "assistant",
-                                        "content": ai_reply,
-                                        "tool_calls": text_tool_calls
-                                    }
-                                    final_messages = processed_messages + [tool_call_msg] + tool_results
-
-                                    _log.info("🔄 再次调用AI，传入工具结果...")
-
-                                    final_payload = {
-                                        "model": current_model_name,
-                                        "messages": final_messages,
-                                        "temperature": 0.7,
-                                        "max_tokens": 2048
-                                    }
-
-                                    async with session.post(url, json=final_payload, headers=headers) as final_response:
-                                        if final_response.status == 200:
-                                            final_result = await final_response.json()
-                                            if final_result.get("choices") and len(final_result["choices"]) > 0:
-                                                final_choice = final_result["choices"][0]
-                                                if "message" in final_choice:
-                                                    final_reply = final_choice["message"].get("content", "")
-                                                    if final_reply:
-                                                        _log.info(f"🤖 AI最终回复: {final_reply[:100]}{'...' if len(final_reply) > 100 else ''}")
-                                                        if save_history:
-                                                            saved_messages = final_messages + [{"role": "assistant", "content": final_reply}]
-                                                            update_last_ai_messages(saved_messages, current_model_name)
-                                                        return final_reply
-                                                    else:
-                                                        return "抱歉，我无法处理这个请求。"
-                                            else:
-                                                return "抱歉，处理请求时出现问题。"
-                                        else:
-                                            return "抱歉，服务暂时不可用。"
-                                else:
-                                    # 普通文本回复
-                                    _log.info(f"🤖 AI回复: {ai_reply[:100]}{'...' if len(ai_reply) > 100 else ''}")
-                                    if save_history:
-                                        saved_messages = processed_messages + [{"role": "assistant", "content": ai_reply}]
-                                        update_last_ai_messages(saved_messages, current_model_name)
-                                    return ai_reply
-
-                        _log.error(f"AI API返回格式异常: {result}")
-                        return None
+                        return AIResponse(
+                            content=content,
+                            finish_reason=finish_reason,
+                            tool_calls=tool_calls
+                        )
                     else:
-                        _log.error(f"AI API返回格式异常: {result}")
-                        return None
+                        return AIResponse(error="API返回格式异常")
                 else:
                     response_text = await response.text()
                     _log.error(f"AI API调用失败，状态码: {response.status}, 响应: {response_text}")
-                    return None
+                    return AIResponse(error=f"API调用失败: {response.status}")
+
     except Exception as e:
         _log.error(f"AI API调用异常: {e}", exc_info=True)
-        import traceback
-        traceback.print_exc()
-        return None
+        return AIResponse(error=str(e))
 
 
-async def call_ai_api_with_semaphore(messages: List[Dict], save_history: bool = True, status_callback: Callable[[str], Awaitable[None]] | None = None) -> str | None:
-    async with request_semaphore:
-        return await call_ai_api(messages, save_history, status_callback)
+async def agent_loop(
+    messages: List[Dict],
+    send_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    save_history: bool = True
+) -> Optional[str]:
+    """
+    基于finish_reason的智能体循环
+
+    核心逻辑：
+    - finish_reason == "tool_calls" → 执行工具 → 继续循环
+    - finish_reason in ["stop", "end_turn"] → 退出循环
+
+    Args:
+        messages: 消息列表
+        send_callback: 发送中间结果给用户的回调函数
+        save_history: 是否保存历史记录
+
+    Returns:
+        str | None: 最终AI回复
+    """
+    step = 0
+    final_messages = list(messages)  # 复制消息列表
+
+    while step < MAX_STEPS:
+        step += 1
+        _log.info(f"[Agent Loop] 第 {step}/{MAX_STEPS} 步")
+
+        # 调用AI
+        response = await call_ai_api_single(final_messages, TOOLS)
+
+        # 错误处理
+        if response.error:
+            _log.error(f"[Agent Loop] 错误: {response.error}")
+            if send_callback:
+                await send_callback(f"❌ 发生错误: {response.error}")
+            return None
+
+        # 情况1：工具调用 → 执行工具，继续循环
+        if response.has_tool_calls:
+            tool_names = [tc['function']['name'] for tc in response.tool_calls]
+            _log.info(f"[Agent Loop] 工具调用: {tool_names}")
+
+            # 推送工具调用信息给用户
+            if send_callback:
+                await send_callback(f"🔧 调用工具: {', '.join(tool_names)}")
+
+            # 执行工具
+            tool_results = await process_tool_calls(response.tool_calls)
+
+            # 推送工具结果给用户（截取前200字符）
+            if send_callback and tool_results:
+                for i, result in enumerate(tool_results):
+                    result_text = result.get("content", "")
+                    preview = result_text[:200] + "..." if len(result_text) > 200 else result_text
+                    tool_name = response.tool_calls[i]['function']['name'] if i < len(response.tool_calls) else "unknown"
+                    await send_callback(f"📋 [{tool_name}] {preview}")
+
+            # 添加助手消息（包含工具调用）
+            assistant_msg = {
+                "role": "assistant",
+                "content": response.content
+            }
+            if response.tool_calls and response.tool_calls == response.tool_calls:
+                # 原生工具调用格式
+                assistant_msg["tool_calls"] = response.tool_calls
+                assistant_msg["content"] = None
+
+            final_messages.append(assistant_msg)
+
+            # 添加工具结果
+            final_messages.extend(tool_results)
+
+            # 继续循环，让AI看到工具结果后决策
+            continue
+
+        # 情况2：任务完成 → 推送回复，退出循环
+        if response.is_done:
+            _log.info(f"[Agent Loop] finish_reason={response.finish_reason}，退出循环")
+
+            if response.content:
+                if send_callback:
+                    await send_callback(response.content)
+
+                if save_history:
+                    # 保存最终消息（包含助手的最终回复）
+                    saved_messages = final_messages + [{"role": "assistant", "content": response.content}]
+                    update_last_ai_messages(saved_messages, current_model_name)
+
+                return response.content
+            else:
+                return "抱歉，我无法处理这个请求。"
+
+        # 情况3：其他finish_reason → 推送回复，退出循环
+        _log.info(f"[Agent Loop] 未知finish_reason={response.finish_reason}，退出循环")
+
+        if response.content:
+            if send_callback:
+                await send_callback(response.content)
+            return response.content
+
+        # 无内容，返回默认消息
+        return "抱歉，我无法回答你的问题。"
+
+    # 达到最大步数
+    _log.warning(f"[Agent Loop] 达到最大步数 {MAX_STEPS}")
+    if send_callback:
+        await send_callback(f"⚠️ 已达到最大处理步数({MAX_STEPS})，任务可能未完全完成。")
+    return "抱歉，处理过程超过了最大步数限制。"
 
 
 async def process_message_with_ai(
     text_content: str,
-    image_paths: List[str] | None = None,
-    send_callback: Callable[[str], Awaitable[None]] | None = None
-) -> str | None:
+    image_paths: Optional[List[str]] = None,
+    send_callback: Optional[Callable[[str], Awaitable[None]]] = None
+) -> Optional[str]:
     """
-    处理消息并调用AI（支持多模态、工具调用和循环评估）
+    处理消息并调用AI（基于finish_reason的智能体循环）
 
     Args:
         text_content: 文本内容
@@ -536,50 +448,5 @@ async def process_message_with_ai(
     messages.append({"role": "user", "content": user_message})
     _log.info(f"[给AI的消息] {user_message[:200]}...")
 
-    # 保存原始用户问题（用于评估）
-    original_question = text_content
-
-    # 循环调用大模型
-    loop_count = 0
-    last_reply = None
-
-    while loop_count < MAX_LOOP_COUNT:
-        loop_count += 1
-        _log.info(f"[循环] 第 {loop_count}/{MAX_LOOP_COUNT} 次调用")
-
-        ai_reply = await call_ai_api_with_semaphore(messages, True, send_callback)
-
-        if ai_reply is None:
-            _log.warning(f"[循环] 第 {loop_count} 次调用返回空结果，继续循环")
-            # 构建重试消息
-            messages.append({"role": "assistant", "content": "（调用失败，正在重试...）"})
-            messages.append({"role": "user", "content": "请重新尝试回答我的问题。"})
-            continue
-
-        last_reply = ai_reply
-
-        # 发送大模型回复给用户
-        if send_callback:
-            try:
-                # 直接发送回复，不添加额外前缀
-                await send_callback(ai_reply)
-            except Exception as e:
-                _log.warning(f"[状态通知] 发送失败: {e}")
-
-        # 评估回复是否有效
-        has_result = await evaluate_response(original_question, ai_reply)
-
-        if has_result:
-            _log.info(f"[循环] 第 {loop_count} 次评估：有结果，结束循环")
-            return ai_reply
-        else:
-            _log.info(f"[循环] 第 {loop_count} 次评估：无结果，继续循环")
-
-            simulated_question = "请提供更详细的回答。"
-
-            messages.append({"role": "assistant", "content": ai_reply})
-            messages.append({"role": "user", "content": simulated_question})
-
-    # 达到最大循环次数，返回最后一次结果
-    _log.info(f"[循环] 达到最大次数 {MAX_LOOP_COUNT}，返回最后结果")
-    return last_reply or "抱歉，我无法回答你的问题。"
+    # 执行智能体循环
+    return await agent_loop(messages, send_callback, save_history=True)

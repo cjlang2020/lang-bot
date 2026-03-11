@@ -6,9 +6,8 @@ from src.config import (
     AI_API_BASE_URL,
     AI_MODEL_NAME,
     MAX_CONCURRENT_REQUESTS,
-    MAX_LOOP_COUNT,
-    SYSTEM_PROMPT,
-    EVALUATION_PROMPT
+    MAX_STEPS,
+    SYSTEM_PROMPT
 )
 from src.session_manager import (
     last_ai_messages,
@@ -29,10 +28,12 @@ from src.image_handler import (
 from src.ai_client import (
     fetch_available_models,
     get_model_name,
-    call_ai_api,
-    call_ai_api_with_semaphore,
-    process_message_with_ai,
-    evaluate_response
+    get_model_info,
+    get_model_context_length,
+    AIResponse,
+    call_ai_api_single,
+    agent_loop,
+    process_message_with_ai
 )
 from src.bot_client import MyClient
 from src.windows_tools import TOOLS, TOOL_FUNCTIONS, process_tool_calls
@@ -42,9 +43,8 @@ __all__ = [
     "AI_API_BASE_URL",
     "AI_MODEL_NAME",
     "MAX_CONCURRENT_REQUESTS",
-    "MAX_LOOP_COUNT",
+    "MAX_STEPS",
     "SYSTEM_PROMPT",
-    "EVALUATION_PROMPT",
     # session_manager
     "last_ai_messages",
     "get_history_messages",
@@ -62,10 +62,12 @@ __all__ = [
     # ai_client
     "fetch_available_models",
     "get_model_name",
-    "call_ai_api",
-    "call_ai_api_with_semaphore",
+    "get_model_info",
+    "get_model_context_length",
+    "AIResponse",
+    "call_ai_api_single",
+    "agent_loop",
     "process_message_with_ai",
-    "evaluate_response",
     # bot_client
     "MyClient",
     # windows_tools

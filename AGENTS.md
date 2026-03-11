@@ -1,4 +1,4 @@
-# AGENTS.md
+# CLAUDE.md
 
 这是一个QQ机器人项目，通过QQ发送信息到本项目，项目接收后转发给支持OPENAI协议的第三方大模型，大模型返回数据后再次返回给QQ用户。
 
@@ -17,31 +17,44 @@
 
 ```
 lang-bot/
-├── start_listener.py      # 主入口文件
-├── .env                   # 环境变量配置（QQ机器人凭证）
+├── start_listener.py          # 主入口文件
+├── .env                       # 环境变量配置（QQ机器人凭证）
 ├── .gitignore
 ├── CLAUDE.md
 ├── README.md
+├── test_ripgrep.py            # Ripgrep测试脚本
+├── 搜索工具更新说明.md
+├── Ripgrep搜索工具使用指南.md
 └── src/
     ├── __init__.py
-    ├── config.py          # 配置和常量
-    ├── bot_client.py      # QQ机器人客户端
-    ├── ai_client.py       # AI API调用（支持循环评估）
-    ├── session_manager.py # 会话管理（单用户模式）
-    ├── image_handler.py   # 图片处理
-    └── windows_tools.py   # Windows工具函数
+    ├── config.py              # 配置和常量
+    ├── bot_client.py          # QQ机器人客户端
+    ├── ai_client.py           # AI API调用（基于finish_reason的智能体循环）
+    ├── session_manager.py     # 会话管理（单用户模式）
+    ├── image_handler.py       # 图片处理
+    ├── search_tools.py        # Ripgrep搜索工具核心实现
+    ├── windows_tools.py       # Windows工具（向后兼容，已迁移到src/tools）
+    └── tools/                 # AI工具模块（按功能拆分）
+        ├── __init__.py
+        ├── file_system.py     # 文件系统工具（列表、读写文件）
+        ├── search.py          # 文件搜索工具（Ripgrep）
+        ├── system.py          # 系统工具（命令、进程、系统信息）
+        ├── network.py         # 网络工具（网络信息、Ping）
+        ├── time.py            # 时间工具
+        └── tool_registry.py   # 工具注册表（聚合所有工具）
 ```
 
 ## 主要功能
 
 - 接收QQ私聊消息
 - 支持图片消息的多模态处理
-- 支持工具调用（文件操作、系统命令等）
+- 支持工具调用（文件操作、系统命令、网络操作、进程管理等）
 - 会话历史管理，支持上下文对话
 - 图片历史记忆，用户可以引用之前的图片
-- **智能体循环机制**：AI自动评估回复，最多循环5次直到获得有效结果
-- **中间过程可见**：每次AI回复、工具调用、模拟问话都会发送给QQ用户
-- **Everything快速搜索**：支持使用Everything SDK进行文件搜索
+- **智能体循环机制**：基于finish_reason的自动循环，让模型自己决定何时完成任务
+- **中间过程可见**：每次工具调用和结果都会实时发送给QQ用户
+- **Ripgrep高效搜索**：支持按文件名和内容搜索（替代Everything）
+- **模块化工具设计**：所有工具按功能分类，易于维护和扩展
 
 ## 数据流程
 
@@ -70,17 +83,15 @@ lang-bot/
 │  │                        ai_client.py                                  │   │
 │  │                                                                      │   │
 │  │  ┌──────────────────────────────────────────────────────────────┐   │   │
-│  │  │                    智能体循环 (最多5次)                          │   │   │
+│  │  │              Agent Loop (基于 finish_reason)                   │   │   │
 │  │  │                                                              │   │   │
 │  │  │  1. 加载系统提示词 + 历史对话 (最多20条)                         │   │   │
 │  │  │  2. 构建消息列表，处理图片为Base64                              │   │   │
-│  │  │  3. 调用 call_ai_api() 请求大模型                              │   │   │
-│  │  │     ├── 返回工具调用 → 执行工具 → 发送结果给用户                 │   │   │
-│  │  │     │   └── 再次调用AI，传入工具结果                            │   │   │
-│  │  │     └── 返回普通回复 → 发送回复给用户                           │   │   │
-│  │  │  4. evaluate_response() 评估回复是否有效                        │   │   │
-│  │  │     ├── 有效 → 结束循环，保存历史                               │   │   │
-│  │  │     └── 无效 → 构建模拟问话，继续循环                           │   │   │
+│  │  │  3. 调用 AI API 请求大模型                                     │   │   │
+│  │  │  4. 检查 finish_reason:                                       │   │   │
+│  │  │     ├── tool_calls → 执行工具 → 推送结果给用户 → 继续循环       │   │   │
+│  │  │     ├── stop / end_turn → 推送回复给用户 → 退出循环             │   │   │
+│  │  │     └── 其他 → 推送回复给用户 → 退出循环                        │   │   │
 │  │  └──────────────────────────────────────────────────────────────┘   │   │
 │  │                                                                      │   │
 │  │  5. 保存对话历史到 session_manager (memory.json)                      │   │
@@ -100,10 +111,9 @@ lang-bot/
 配置模块，存储全局配置：
 - `AI_API_BASE_URL`: AI API地址 (默认: http://127.0.0.1:9900/v1)
 - `MAX_CONCURRENT_REQUESTS`: 最大并发请求数 (10)
-- `MAX_LOOP_COUNT`: 智能体循环最大次数 (5)
+- `MAX_STEPS`: 智能体循环最大步数 (50，安全上限)
 - `MAX_HISTORY_LENGTH`: 历史记录最大长度 (20条)
 - `SYSTEM_PROMPT`: 系统提示词
-- `EVALUATION_PROMPT`: 答案评估提示词
 
 ### src/bot_client.py
 机器人客户端模块，核心类 `MyClient`：
@@ -115,9 +125,10 @@ lang-bot/
 ### src/ai_client.py
 AI客户端模块，处理与大模型的交互：
 - `fetch_available_models()`: 从API获取可用模型列表
-- `call_ai_api()`: 调用AI API（支持多模态和工具调用）
-- `process_message_with_ai()`: 处理消息的主入口函数，实现智能体循环
-- `evaluate_response()`: 评估AI回复是否有效
+- `AIResponse`: AI响应封装类，包含content、finish_reason、tool_calls
+- `call_ai_api_single()`: 单次调用AI API，返回结构化响应
+- `agent_loop()`: 基于finish_reason的智能体循环
+- `process_message_with_ai()`: 处理消息的主入口函数
 - `parse_text_tool_call()`: 解析文本格式的工具调用（支持Qwen格式）
 - 支持图片关键词检测，自动附带历史图片
 
@@ -139,26 +150,36 @@ AI客户端模块，处理与大模型的交互：
 - `process_image_attachment()`: 处理消息中的图片附件
 
 ### src/windows_tools.py
-Windows工具模块，提供AI可调用的工具函数：
+Windows工具模块（向后兼容，实际功能已迁移到 `src/tools/` 目录）
 
-**文件系统工具：**
+### src/tools/ (新增)
+工具模块目录，按功能分类拆分所有AI可调用的工具函数：
+
+**src/tools/file_system.py - 文件系统工具**
 - `list_directory`: 列出目录内容
 - `read_file`: 读取文件内容
 - `create_file`: 创建新文件
 - `write_to_file`: 写入文件
-- `search_files`: 使用Everything快速搜索文件
 
-**系统工具：**
+**src/tools/search.py - 搜索工具（使用Ripgrep）**
+- `search_files`: 按文件名搜索（支持通配符和正则）
+- `search_content`: 按内容搜索文件内部文本
+
+**src/tools/system.py - 系统工具**
 - `execute_command`: 执行CMD/PowerShell命令
 - `get_system_info`: 获取系统信息（CPU/内存/磁盘/网络）
 - `get_process_list`: 获取进程列表
 
-**网络工具：**
+**src/tools/network.py - 网络工具**
 - `get_network_info`: 获取网络信息
 - `ping_host`: Ping主机
 
-**时间工具：**
+**src/tools/time.py - 时间工具**
 - `get_current_time`: 获取当前时间
+
+**src/tools/tool_registry.py - 工具注册表**
+- 聚合所有工具定义和函数映射
+- 提供统一的工具调用接口
 
 ## 大模型相关
 
@@ -197,26 +218,32 @@ Windows工具模块，提供AI可调用的工具函数：
 
 ## 智能体循环机制
 
+基于 finish_reason 的 ReAct (Reasoning + Acting) 模式：
+
 ```
 用户提问
     ↓
 调用大模型
     ↓
-评估回复是否有效
-    ├── 有效 → 返回结果给用户
-    └── 无效 → 构建模拟问话"你的回答似乎没有解决问题，请换一种方式重新回答。"
-              ↓
-              继续调用大模型（最多5次）
+检查 finish_reason
+    ├── tool_calls → 执行工具 → 添加工具消息 → 继续循环
+    ├── stop / end_turn → 结束循环，返回结果
+    └── 其他 → 结束循环，返回结果
 ```
+
+### finish_reason 决定是否继续
+
+| finish_reason | 行为     | 含义                               |
+| ------------- | -------- | ---------------------------------- |
+| `tool_calls`  | 继续循环 | 模型调用了工具，需要执行后返回结果 |
+| `stop`        | 退出循环 | 模型认为任务完成                   |
+| `end_turn`    | 退出循环 | 回合结束                           |
+| `length`      | 退出循环 | 达到token限制                      |
 
 ### 中间消息发送
 每次循环过程中的以下信息都会实时发送给QQ用户：
-- `🤖 正在思考...`
 - `🔧 调用工具: xxx`
-- `📋 工具结果: xxx`
-- `🤖 AI回复: xxx`
-- `💭 智能体追问: xxx`
-- `🔄 第 N 次尝试...`
+- `📋 [工具名] 工具结果: xxx`
 
 ## 环境变量配置
 
