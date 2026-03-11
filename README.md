@@ -7,9 +7,10 @@
 - **私聊消息处理**：接收QQ私聊消息，支持上下文对话
 - **多模态图片理解**：支持发送图片，AI可分析图片内容
 - **模块化工具调用**：按功能分类的工具系统（文件、搜索、系统、网络、时间）
-- **Ripgrep高效搜索**：支持按文件名和内容搜索，替代Everything
-- **智能体循环**：AI自动评估回复有效性，最多循环5次直到获得满意结果
-- **中间过程可见**：每次AI回复、工具调用、模拟问话都会实时发送给用户
+- **Skill技能系统**：支持加载专业技能指南（PDF、Excel、PPT等）
+- **Ripgrep高效搜索**：支持按文件名和内容搜索
+- **智能体循环**：基于finish_reason自动循环，让模型决定何时完成任务
+- **中间过程可见**：每次工具调用和结果都会实时发送给用户
 - **会话持久化**：对话历史保存到文件，程序重启后自动恢复
 
 ## 项目结构
@@ -20,24 +21,33 @@ lang-bot/
 ├── .env                       # 环境变量配置
 ├── README.md
 ├── CLAUDE.md
+├── AGENTS.md
+├── skills/                    # Skill技能目录
+│   ├── pdf/                   # PDF处理技能
+│   ├── xlsx/                  # Excel处理技能
+│   ├── pptx/                  # PowerPoint处理技能
+│   ├── webapp-testing/        # Web应用测试技能
+│   ├── skill-creator/         # Skill创建工具
+│   └── frontend-slides/       # HTML演示文稿技能
 ├── data/                      # 数据目录
 │   ├── memory.json           # 会话历史
 │   └── YYYY-MM/              # 按月份存储的图片
 └── src/
-    ├── __init__.py
     ├── config.py              # 配置和常量
     ├── bot_client.py          # QQ机器人客户端
-    ├── ai_client.py           # AI API调用（支持循环评估）
-    ├── session_manager.py     # 会话管理（单用户模式）
+    ├── ai_client.py           # AI API调用
+    ├── session_manager.py     # 会话管理
     ├── image_handler.py       # 图片处理
-    ├── search_tools.py        # Ripgrep搜索核心实现
-    └── tools/                 # 工具模块（按功能分类）
-        ├── __init__.py
+    ├── skills/                # Skill系统模块
+    │   └── skill_service.py   # Skill发现服务
+    └── tools/                 # 工具模块
         ├── file_system.py     # 文件系统工具
         ├── search.py          # 搜索工具
         ├── system.py          # 系统工具
         ├── network.py         # 网络工具
-        └── time.py            # 时间工具
+        ├── time.py            # 时间工具
+        ├── skill.py           # Skill工具
+        └── tool_registry.py   # 工具注册表
 ```
 
 ## 快速开始
@@ -52,12 +62,6 @@ lang-bot/
 ```bash
 pip install qq-botpy aiohttp python-dotenv psutil
 ```
-
-可选依赖（Everything文件搜索）：
-```bash
-pip install py-everything
-```
-注意：使用Everything搜索需要先安装并运行 [Everything软件](https://www.voidtools.com/)
 
 ### 配置
 
@@ -86,7 +90,7 @@ python start_listener.py
 
 ## AI工具调用
 
-AI可调用以下工具：
+### 基础工具
 
 | 工具 | 说明 |
 |------|------|
@@ -94,7 +98,7 @@ AI可调用以下工具：
 | `read_file` | 读取文件内容 |
 | `create_file` | 创建新文件 |
 | `write_to_file` | 写入文件 |
-| `search_files` | 使用Everything快速搜索文件 |
+| `search_files` | 搜索文件 |
 | `execute_command` | 执行CMD/PowerShell命令 |
 | `get_system_info` | 获取系统信息 |
 | `get_process_list` | 获取进程列表 |
@@ -102,30 +106,71 @@ AI可调用以下工具：
 | `ping_host` | Ping主机 |
 | `get_current_time` | 获取当前时间 |
 
+### Skill技能工具
+
+AI可加载专业技能指南来处理特定类型任务：
+
+| Skill | 说明 |
+|-------|------|
+| `pdf` | PDF文件处理（读取、合并、分割、提取、OCR） |
+| `xlsx` | Excel表格处理（读写、公式、格式化、数据分析） |
+| `pptx` | PowerPoint演示文稿处理（创建、编辑、转换） |
+| `webapp-testing` | Web应用测试（Playwright自动化） |
+| `skill-creator` | 创建和优化Skill |
+| `frontend-slides` | 创建HTML演示文稿 |
+
+**使用方式**：
+- 问"你有哪些skill"或"你有什么技能" → AI会调用skill()列出所有技能
+- 问"帮我处理这个PDF" → AI会自动加载pdf skill指南
+
+## Skill 技能系统
+
+### 概述
+Skill系统允许AI加载专业技能指南，获取详细的处理指令和最佳实践。
+
+### 扩展方式
+添加新技能只需：
+1. 在 `skills/` 目录下创建新文件夹（如 `my-skill/`）
+2. 添加 `SKILL.md` 文件：
+
+```markdown
+---
+name: my-skill
+description: 描述何时使用此skill
+---
+
+# Skill 详细指令
+具体的指令内容、示例、最佳实践等...
+```
+
+3. 重启程序，自动发现并加载
+
+无需修改任何代码！
+
 ## 智能体循环机制
 
-机器人会自动评估AI回复的有效性，最多循环5次：
+机器人基于 finish_reason 自动循环，让模型决定何时完成任务：
 
 ```
 用户提问
     ↓
 调用大模型
     ↓
-评估回复是否有效
-    ├── 有效 → 返回结果
-    └── 无效 → 智能体追问 → 再次调用大模型
+检查 finish_reason
+    ├── tool_calls → 执行工具 → 推送结果 → 继续循环
+    ├── stop / end_turn → 返回结果
+    └── 其他 → 返回结果
 ```
 
 ### 中间消息示例
 
 用户可以实时看到AI的思考过程：
 ```
-🤖 正在思考...
 🔧 调用工具: search_files
-📋 工具结果: 找到3个文件...
-🤖 AI回复: 文件已找到...
-🔄 第2次尝试...
-💭 智能体追问: 你的回答似乎没有解决问题...
+📋 [search_files] 找到3个文件...
+🔧 调用工具: read_file
+📋 [read_file] 文件内容...
+🤖 AI回复: 文件已找到，内容如下...
 ```
 
 ## 配置说明
@@ -136,32 +181,12 @@ AI可调用以下工具：
 |--------|--------|------|
 | `AI_API_BASE_URL` | `http://127.0.0.1:9900/v1` | AI API地址 |
 | `MAX_CONCURRENT_REQUESTS` | 10 | 最大并发请求数 |
-| `MAX_LOOP_COUNT` | 5 | 智能体循环最大次数 |
-| `MAX_HISTORY_LENGTH` | 20 | 历史记录最大条数 |
+| `MAX_STEPS` | 50 | 智能体循环最大步数 |
 
 ## 数据存储
 
-- `data/memory.json`：会话历史持久化存储（单用户模式）
+- `data/memory.json`：会话历史持久化存储
 - `data/YYYY-MM/`：按月份存储的图片文件
-
-## 数据流程
-
-```
-QQ用户发送消息 → bot_client.py 接收
-       ↓
-检查是否为指令 → 是 → 执行指令，返回结果
-       ↓ 否
-检查是否有图片 → 下载图片到 data/ 目录
-       ↓
-ai_client.py → 加载历史对话 → 构建消息 → 调用大模型
-       ↓
-智能体循环（最多5次）：
-  - 发送中间结果给用户
-  - 评估回复有效性
-  - 无效则构建模拟问话继续
-       ↓
-保存历史 → 返回最终结果给QQ用户
-```
 
 ## 支持的模型
 
@@ -177,7 +202,7 @@ ai_client.py → 加载历史对话 → 构建消息 → 调用大模型
 - 支持热重载历史会话
 - 图片自动转Base64发送给大模型
 - 支持引用历史图片进行分析
-- 消息去重延迟，避免QQ API限制
+- Skill系统零配置扩展
 
 ## License
 
