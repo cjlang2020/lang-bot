@@ -7,10 +7,11 @@ data/*
 __pycache__/
 *.py[codz]
 *$py.class
-
+skills/*
 # C extensions
 *.so
-
+qq-api
+qq-api/*
 # Distribution / packaging
 .Python
 build/

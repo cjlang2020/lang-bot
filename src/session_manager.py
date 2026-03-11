@@ -15,6 +15,9 @@ _log = logging.get_logger()
 # 持久化文件路径
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "memory.json")
 
+# 历史消息最大条数（避免消息太长）
+MAX_HISTORY_LENGTH = 20
+
 # 最后一次发送给大模型的消息（包含系统提示词和完整对话历史）
 last_ai_messages: Dict = {}
 
@@ -64,14 +67,21 @@ def load_from_file():
 
 def get_history_messages() -> List[Dict]:
     """
-    获取历史对话消息（不含系统提示词）
+    获取历史对话消息（不含系统提示词），限制数量避免上下文过长
 
     Returns:
         List[Dict]: 历史消息列表
     """
     messages = last_ai_messages.get("messages", [])
     # 过滤掉系统提示词，只返回对话历史
-    return [msg for msg in messages if msg.get("role") != "system"]
+    history = [msg for msg in messages if msg.get("role") != "system"]
+
+    # 限制历史消息数量（保留最近的N条）
+    if len(history) > MAX_HISTORY_LENGTH:
+        history = history[-MAX_HISTORY_LENGTH:]
+        _log.info(f"[历史] 截取最近 {MAX_HISTORY_LENGTH} 条消息")
+
+    return history
 
 
 def get_last_images() -> List[str]:
@@ -122,12 +132,32 @@ def update_last_ai_messages(messages: List[Dict], model: str):
             # 保存为纯文本（文本中已包含图片路径）
             msg_copy["content"] = text_content
 
+        # 注意：如果content是None（工具调用情况），保留原样
+        # 同时保留tool_calls字段
+
         simplified_messages.append(msg_copy)
+
+    # 限制保存的消息数量（保留系统提示词 + 最近的历史消息）
+    system_msg = None
+    other_msgs = []
+    for msg in simplified_messages:
+        if msg.get("role") == "system":
+            system_msg = msg
+        else:
+            other_msgs.append(msg)
+
+    # 保留最近的对话历史
+    if len(other_msgs) > MAX_HISTORY_LENGTH:
+        other_msgs = other_msgs[-MAX_HISTORY_LENGTH:]
+        _log.info(f"[持久化] 保存最近 {MAX_HISTORY_LENGTH} 条消息")
+
+    # 重新组合
+    final_messages = [system_msg] + other_msgs if system_msg else other_msgs
 
     last_ai_messages = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "model": model,
-        "messages": simplified_messages
+        "messages": final_messages
     }
 
     # 保存到文件

@@ -1,20 +1,16 @@
 # CLAUDE.md
 
-这是一个QQ机器人项目，通过QQ发送信息到本项目，项目接收后转发给支持OPENAI协议的第三方大模型，大模型返回数据后再次返回给QQ用户
+这是一个QQ机器人项目，通过QQ发送信息到本项目，项目接收后转发给支持OPENAI协议的第三方大模型，大模型返回数据后再次返回给QQ用户。
 
 ## 项目简介
 
 技术是python开发。
 环境是conda创建的，pyhton3.12版本的，路径是：D:\AI\botpy-master\envs
-通过：conda activate D:\AI\botpy-master\envs 激活
+做测试必须使用这个环境
 
-项目分析时忽略envs和data等文件夹
+项目分析时忽略envs、data、qq-api等文件夹
 
 涉及到的代码如果有扩展代码，也就是不能所有代码放一个文件，需要分开，代码可放在src目录下
-
-如果要启用测试，可以在终端执行下面命令在切换python环境：
-C:/Users/Lang/anaconda3/Scripts/activate
-conda activate D:\AI\lang-bot\envs
 
 
 ## 项目结构
@@ -25,15 +21,15 @@ lang-bot/
 ├── .env                   # 环境变量配置（QQ机器人凭证）
 ├── .gitignore
 ├── CLAUDE.md
+├── README.md
 └── src/
     ├── __init__.py
     ├── config.py          # 配置和常量
     ├── bot_client.py      # QQ机器人客户端
-    ├── ai_client.py       # AI API调用
-    ├── session_manager.py # 会话管理
+    ├── ai_client.py       # AI API调用（支持循环评估）
+    ├── session_manager.py # 会话管理（单用户模式）
     ├── image_handler.py   # 图片处理
-    ├── windows_tools.py   # Windows工具函数
-    └── main.py            # 备用入口（未使用）
+    └── windows_tools.py   # Windows工具函数
 ```
 
 ## 主要功能
@@ -43,6 +39,9 @@ lang-bot/
 - 支持工具调用（文件操作、系统命令等）
 - 会话历史管理，支持上下文对话
 - 图片历史记忆，用户可以引用之前的图片
+- **智能体循环机制**：AI自动评估回复，最多循环5次直到获得有效结果
+- **中间过程可见**：每次AI回复、工具调用、模拟问话都会发送给QQ用户
+- **Everything快速搜索**：支持使用Everything SDK进行文件搜索
 
 ## 数据流程
 
@@ -58,32 +57,33 @@ lang-bot/
 │  │  └──────────┬───────────┘                                           │   │
 │  │             │                                                        │   │
 │  │             ↓                                                        │   │
-│  │              生成 session_id (c2c_xxx)                               │   │
+│  │              检查是否是指令 (/清理, /会话)                             │   │
 │  │                          ↓                                          │   │
 │  │              检查是否有图片附件                                       │   │
 │  │                          ↓                                          │   │
-│  │              调用 process_image_attachment() 下载图片                 │   │
-│  │                          ↓                                          │   │
 │  │              调用 process_message_with_ai() 处理消息                  │   │
-│  └──────────────────────────┼──────────────────────────────────────────┘   │
+│  │                          ↓                                          │   │
+│  │              通过回调函数发送中间结果给用户                             │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
 │                             ↓                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                        ai_client.py                                  │   │
 │  │                                                                      │   │
-│  │  1. 加载系统提示词 (SYSTEM_PROMPT)                                    │   │
-│  │  2. 从 session_manager 加载历史对话                                   │   │
-│  │  3. 检查是否需要附带历史图片                                           │   │
-│  │  4. 构建消息列表，处理图片为Base64                                     │   │
-│  │  5. 调用 call_ai_api() 请求大模型                                     │   │
-│  │     ├── 如果AI返回工具调用 → process_tool_calls() 执行工具            │   │
-│  │     │   └── 再次调用AI，传入工具结果                                   │   │
-│  │     └── 如果AI返回普通回复 → 直接返回                                  │   │
-│  │  6. 保存对话历史到 session_manager                                    │   │
-│  └──────────────────────────┼──────────────────────────────────────────┘   │
-│                             ↓                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                        bot_client.py                                 │   │
-│  │              回复AI结果给QQ用户                                        │   │
+│  │  ┌──────────────────────────────────────────────────────────────┐   │   │
+│  │  │                    智能体循环 (最多5次)                          │   │   │
+│  │  │                                                              │   │   │
+│  │  │  1. 加载系统提示词 + 历史对话 (最多20条)                         │   │   │
+│  │  │  2. 构建消息列表，处理图片为Base64                              │   │   │
+│  │  │  3. 调用 call_ai_api() 请求大模型                              │   │   │
+│  │  │     ├── 返回工具调用 → 执行工具 → 发送结果给用户                 │   │   │
+│  │  │     │   └── 再次调用AI，传入工具结果                            │   │   │
+│  │  │     └── 返回普通回复 → 发送回复给用户                           │   │   │
+│  │  │  4. evaluate_response() 评估回复是否有效                        │   │   │
+│  │  │     ├── 有效 → 结束循环，保存历史                               │   │   │
+│  │  │     └── 无效 → 构建模拟问话，继续循环                           │   │   │
+│  │  └──────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                      │   │
+│  │  5. 保存对话历史到 session_manager (memory.json)                      │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -100,30 +100,36 @@ lang-bot/
 配置模块，存储全局配置：
 - `AI_API_BASE_URL`: AI API地址 (默认: http://127.0.0.1:9900/v1)
 - `MAX_CONCURRENT_REQUESTS`: 最大并发请求数 (10)
-- `SESSION_EXPIRE_TIME`: 会话过期时间 (3600秒)
+- `MAX_LOOP_COUNT`: 智能体循环最大次数 (5)
 - `MAX_HISTORY_LENGTH`: 历史记录最大长度 (20条)
 - `SYSTEM_PROMPT`: 系统提示词
+- `EVALUATION_PROMPT`: 答案评估提示词
 
 ### src/bot_client.py
 机器人客户端模块，核心类 `MyClient`：
 - `on_ready()`: 启动时获取可用模型
-- `on_c2c_message_create()`: 处理私聊消息，使用用户openid作为会话ID
+- `on_c2c_message_create()`: 处理私聊消息
+- `handle_command()`: 处理 `/清理`、`/会话` 指令
+- `send_intermediate_result()`: 发送中间结果回调（带消息去重延迟）
 
 ### src/ai_client.py
 AI客户端模块，处理与大模型的交互：
 - `fetch_available_models()`: 从API获取可用模型列表
 - `call_ai_api()`: 调用AI API（支持多模态和工具调用）
-- `process_message_with_ai()`: 处理消息的主入口函数
+- `process_message_with_ai()`: 处理消息的主入口函数，实现智能体循环
+- `evaluate_response()`: 评估AI回复是否有效
+- `parse_text_tool_call()`: 解析文本格式的工具调用（支持Qwen格式）
 - 支持图片关键词检测，自动附带历史图片
 
 ### src/session_manager.py
-会话管理模块：
-- `session_histories`: 全局会话缓存字典
-- `get_session()`: 获取会话历史
-- `add_to_session()`: 添加消息到会话
-- `get_last_images()`: 获取会话中最后的图片
+会话管理模块（单用户模式）：
+- `last_ai_messages`: 最后一次发送给大模型的完整消息
+- `last_images`: 最后发送的图片路径
+- `get_history_messages()`: 获取历史对话（不含系统提示词，限制20条）
+- `update_last_ai_messages()`: 更新并保存消息到 memory.json
+- `get_last_images()`: 获取最后发送的图片
 - `set_last_images()`: 保存图片路径
-- `cleanup_expired_sessions()`: 清理过期会话
+- `clear_history()`: 清空对话历史
 
 ### src/image_handler.py
 图片处理模块：
@@ -140,7 +146,7 @@ Windows工具模块，提供AI可调用的工具函数：
 - `read_file`: 读取文件内容
 - `create_file`: 创建新文件
 - `write_to_file`: 写入文件
-- `search_files`: 搜索文件
+- `search_files`: 使用Everything快速搜索文件
 
 **系统工具：**
 - `execute_command`: 执行CMD/PowerShell命令
@@ -175,6 +181,42 @@ Windows工具模块，提供AI可调用的工具函数：
 - 多轮对话历史
 - 多模态图片理解（Base64编码）
 - Function Calling 工具调用
+- 文本格式工具调用解析（Qwen格式：`<function=name>...</function>`）
+
+### 工具调用格式
+支持两种格式：
+1. **原生Function Calling**：OpenAI标准格式
+2. **文本格式**：Qwen风格
+   ```
+   <function=search_files>
+   <parameter=pattern>
+   zhanghao.txt
+   </parameter>
+   </function>
+   ```
+
+## 智能体循环机制
+
+```
+用户提问
+    ↓
+调用大模型
+    ↓
+评估回复是否有效
+    ├── 有效 → 返回结果给用户
+    └── 无效 → 构建模拟问话"你的回答似乎没有解决问题，请换一种方式重新回答。"
+              ↓
+              继续调用大模型（最多5次）
+```
+
+### 中间消息发送
+每次循环过程中的以下信息都会实时发送给QQ用户：
+- `🤖 正在思考...`
+- `🔧 调用工具: xxx`
+- `📋 工具结果: xxx`
+- `🤖 AI回复: xxx`
+- `💭 智能体追问: xxx`
+- `🔄 第 N 次尝试...`
 
 ## 环境变量配置
 
@@ -191,8 +233,21 @@ QQ_BOT_SECRET=你的机器人Secret
 - `aiohttp`: 异步HTTP客户端
 - `python-dotenv`: 环境变量加载
 - `psutil`: 系统信息获取（可选）
+- `py-everything`: Everything文件搜索（可选，需要Everything软件运行）
 
 安装命令：
 ```bash
-pip install qq-botpy aiohttp python-dotenv psutil
+pip install qq-botpy aiohttp python-dotenv psutil py-everything
 ```
+
+## 数据存储
+
+- `data/memory.json`: 会话历史持久化存储（单用户模式）
+- `data/YYYY-MM/`: 按月份存储的图片文件
+
+## 指令系统
+
+| 指令 | 说明 |
+|------|------|
+| `/清理` | 清空对话历史（洗脑） |
+| `/会话` | 查看会话统计信息（消息数、图片数、Token预估、模型信息） |

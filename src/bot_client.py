@@ -2,6 +2,8 @@
 机器人客户端模块 - 处理QQ消息的接收和回复
 """
 
+import asyncio
+import time
 import botpy
 from botpy import logging
 from botpy.message import C2CMessage
@@ -11,6 +13,23 @@ from src.image_handler import process_image_attachment
 from src.session_manager import clear_history, get_stats
 
 _log = logging.get_logger()
+
+# 消息发送间隔（秒），根据消息长度动态调整
+MESSAGE_INTERVAL_SHORT = 4.0   # 短消息（≤20字）
+MESSAGE_INTERVAL_MEDIUM = 5.0  # 中等消息（21-100字）
+MESSAGE_INTERVAL_LONG = 6.0    # 长消息（>100字）
+
+
+def _calculate_interval(content: str) -> float:
+    """根据消息长度计算发送间隔"""
+    length = len(content)
+    if length <= 20:
+        return MESSAGE_INTERVAL_SHORT
+    elif length <= 100:
+        return MESSAGE_INTERVAL_MEDIUM
+    else:
+        return MESSAGE_INTERVAL_LONG
+_last_send_time = 0
 
 
 def handle_command(text_content: str) -> str | None:
@@ -124,10 +143,48 @@ class MyClient(botpy.Client):
                 elif error:
                     _log.error(f"[C2C] 图片处理失败: {error}")
 
-        # 调用AI处理消息
-        ai_response = await process_message_with_ai(text_content, image_paths)
+        # 维护一个消息序号计数器，用于避免消息去重
+        msg_seq_counter = 1
 
-        if ai_response:
-            await message.reply(content=ai_response)
-        else:
+        # 定义发送中间结果的回调函数（添加延迟和不同的msg_seq，避免消息去重）
+        async def send_intermediate_result(content: str):
+            """发送中间结果给用户（根据消息长度动态调整延迟，并使用递增的msg_seq）"""
+            nonlocal msg_seq_counter
+            global _last_send_time
+            try:
+                # 根据消息长度计算间隔时间
+                interval = _calculate_interval(content)
+
+                # 计算需要等待的时间
+                current_time = time.time()
+                elapsed = current_time - _last_send_time
+                wait_time = interval - elapsed
+
+                if wait_time > 0:
+                    _log.info(f"[回调] 消息长度 {len(content)}，等待 {wait_time:.1f} 秒后发送...")
+                    await asyncio.sleep(wait_time)
+
+                # 使用递增的msg_seq发送消息，避免被判定为重复消息
+                msg_seq = msg_seq_counter
+                msg_seq_counter += 1
+
+                # 调用底层API，传入msg_seq参数
+                await message._api.post_c2c_message(
+                    openid=message.author.user_openid,
+                    msg_type=0,
+                    msg_id=message.id,
+                    msg_seq=msg_seq,
+                    content=content
+                )
+
+                _last_send_time = time.time()
+                _log.info(f"[回调] 已发送中间结果 (msg_seq={msg_seq}): {content[:50]}...")
+            except Exception as e:
+                _log.error(f"[回调] 发送中间结果失败: {e}")
+
+        # 调用AI处理消息（传入回调函数）
+        ai_response = await process_message_with_ai(text_content, image_paths, send_intermediate_result)
+
+        # 最终回复不再发送，因为中间过程已经发送了最后一次AI回复
+        if not ai_response:
             await message.reply(content="抱歉，暂时无法处理您的消息。")
