@@ -329,8 +329,8 @@ async def agent_loop(
             _log.info(f"[Agent Loop] 工具调用: {tool_names}")
 
             # 推送工具调用信息给用户
-            if send_callback:
-                await send_callback(f"🔧 调用工具: {', '.join(tool_names)}")
+            #if send_callback:
+            #    await send_callback(f"🔧 调用工具: {', '.join(tool_names)}")
 
             # 执行工具
             tool_results = await process_tool_calls(response.tool_calls)

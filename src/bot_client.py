@@ -12,6 +12,7 @@ from src.ai_client import process_message_with_ai, fetch_available_models, get_m
 from src.image_handler import process_image_attachment
 from src.session_manager import clear_history, get_stats
 
+from src.global_state import set_bot_api, set_user_openid, set_bot_loop
 _log = logging.get_logger()
 
 # 消息发送间隔（秒），根据消息长度动态调整
@@ -114,6 +115,11 @@ class MyClient(botpy.Client):
     async def on_ready(self):
         """机器人启动就绪"""
         _log.info(f"robot 「{self.robot.name}」 on_ready!")
+        
+        # 设置全局Bot API实例和事件循环
+        set_bot_api(self.api)
+        set_bot_loop(asyncio.get_event_loop())
+        
         await fetch_available_models()
         _log.info(f"已设置AI模型: {get_model_name()}")
 
@@ -124,9 +130,12 @@ class MyClient(botpy.Client):
         Args:
             message: C2C消息对象
         """
+        # 保存用户OpenID，用于HTTP接口发送消息
+        if message.author and message.author.user_openid:
+            set_user_openid(message.author.user_openid)
+        
         text_content = message.content or ""
         image_paths = []
-
         # 检查是否是指令
         command_response = handle_command(text_content)
         if command_response is not None:
